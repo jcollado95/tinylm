@@ -19,8 +19,8 @@ step by step according to the literature (e.g. RoPE, SwiGLU, etc.)
 # Ideas for future improvements
 
 - (Done) Rotary Positional Embeddings (RoPE)
+- (Done) RMSNorm instead of LayerNorm
 - SwiGLU instead of GELU
-- RMSNorm instead of LayerNorm
 - Grouped Query Attention (GQA)
 - Scheduler: Warmup + cosine decay
 - KV cache to speed up inference
