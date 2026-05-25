@@ -1,6 +1,8 @@
 # Custom
 checkpoint.pt
 tokenizer.json
+tokenizer_*
+dataset/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

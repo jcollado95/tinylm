@@ -162,6 +162,12 @@ class BPETokenizer:
     def load(cls, path: str) -> "BPETokenizer":
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
+        return cls.load_from_dict(data)
+
+    @classmethod
+    def load_from_dict(cls, data: dict) -> "BPETokenizer":
+        """Construye un tokenizador desde un dict ya parseado.
+        Usado por los workers de multiprocessing para evitar I/O."""
         tok = cls()
         tok.vocab        = data["vocab"]
         tok.id_to_token  = {int(v): k for k, v in tok.vocab.items()}

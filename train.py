@@ -19,9 +19,9 @@ import os
 import argparse
 import torch
 
-from toylm.tokenizer import BPETokenizer
-from toylm.model     import TinyLM, Config
-from toylm.dataset   import load_corpus, build_dataset, get_batch
+from tinylm.tokenizer import BPETokenizer
+from tinylm.model     import TinyLM, Config
+from tinylm.dataset   import load_corpus, build_dataset, get_batch
 
 
 # ─────────────────────────────────────────────────────────────
@@ -89,6 +89,16 @@ def load_checkpoint(model, optimizer, path, device):
     return ckpt["step"], ckpt["loss"]
 
 
+def _tokenize_chunk(args):
+    chunk, tok_data = args
+    import json
+    from tinylm.tokenizer import BPETokenizer
+    tok = BPETokenizer.load_from_dict(json.loads(tok_data))
+    ids = []
+    for cuento in chunk:
+        ids.extend(tok.encode_with_special(cuento))
+    return ids
+
 # ─────────────────────────────────────────────────────────────
 # GENERACIÓN  — muestra texto durante el entrenamiento
 # ─────────────────────────────────────────────────────────────
@@ -118,8 +128,7 @@ def sample(
         print(f"  [{prompt!r}] → {text}")
     print()
     model.train()
-
-
+    
 # ─────────────────────────────────────────────────────────────
 # MAIN
 # ─────────────────────────────────────────────────────────────
@@ -146,15 +155,18 @@ def main():
 
     # ── 2. Tokenizador ───────────────────────────────────────
     print("\n[2/4] Tokenizador...")
-    if os.path.exists(TOKENIZER_PATH) and not args.resume is False:
-        print(f"  Cargando tokenizador desde {TOKENIZER_PATH}")
+    if os.path.exists(TOKENIZER_PATH):
         tokenizer = BPETokenizer.load(TOKENIZER_PATH)
-        # Si el vocab_size del archivo no coincide, reentrenar
         if tokenizer.vocab_size != args.vocab_size:
-            print(f"  Vocab size no coincide ({tokenizer.vocab_size} ≠ {args.vocab_size}), reentrenando...")
+            print(f"  Vocab size no coincide ({tokenizer.vocab_size} vs {args.vocab_size}), reentrenando...")
             os.remove(TOKENIZER_PATH)
-    
-    if not os.path.exists(TOKENIZER_PATH):
+            tokenizer = None
+        else:
+            print(f"  Cargado desde {TOKENIZER_PATH} (vocab={tokenizer.vocab_size})")
+    else:
+        tokenizer = None
+
+    if tokenizer is None:
         print(f"  Entrenando BPE (vocab_size={args.vocab_size})...")
         tokenizer = BPETokenizer()
         tokenizer.train(corpus, vocab_size=args.vocab_size, verbose=True)
@@ -172,15 +184,44 @@ def main():
     # ── 3. Dataset ───────────────────────────────────────────
     print("\n[3/4] Preparando dataset...")
 
-    # Tokenizar corpus completo con tokens especiales de secuencia
-    # Cada cuento se envuelve en <bos>...<eos> para que el modelo
-    # aprenda cuándo comienza y termina una historia
-    all_ids: list[int] = []
+    import hashlib, pickle
+    from multiprocessing import Pool, cpu_count
+
+    # Clave de caché: cambia si cambia el corpus o el tokenizador
+    cache_key = hashlib.md5((corpus + str(tokenizer.vocab_size)).encode()).hexdigest()[:12]
+    cache_path = f"{TOKENIZER_PATH.replace('.json', '')}_{cache_key}_ids.pkl"
+
     cuentos = [c.strip() for c in corpus.split("\n\n") if c.strip()]
-    for cuento in cuentos:
-        all_ids.extend(tokenizer.encode_with_special(cuento))
+
+    if os.path.exists(cache_path):
+        print(f"  Cargando tokens desde caché ({cache_path})...")
+        with open(cache_path, "rb") as f:
+            all_ids = pickle.load(f)
+    else:
+        n_workers = min(cpu_count(), 8)
+        print(f"  Tokenizando {len(cuentos)} cuentos con {n_workers} workers...")
+
+        # encode_with_special no es picklable como método de instancia,
+        # por lo que pasamos el tokenizador serializado a cada worker
+        import json as _json
+        tok_data = _json.dumps({"vocab": tokenizer.vocab, "merges": tokenizer.merges})
+
+        # Dividir en chunks (un chunk por worker)
+        chunk_size = max(1, len(cuentos) // n_workers)
+        chunks = [cuentos[i:i+chunk_size] for i in range(0, len(cuentos), chunk_size)]
+        chunk = [(chunk, tok_data) for chunk in chunks]
+
+        with Pool(n_workers) as pool:
+            results = pool.map(_tokenize_chunk, chunk)
+
+        all_ids = [tok_id for chunk_ids in results for tok_id in chunk_ids]
+
+        with open(cache_path, "wb") as f:
+            pickle.dump(all_ids, f)
+        print(f"  Tokens cacheados en {cache_path}")
 
     print(f"  {len(cuentos)} cuentos | {len(all_ids):,} tokens totales")
+
 
     # Split train / validación
     split_idx = int(len(all_ids) * (1 - VAL_SPLIT))

@@ -34,7 +34,7 @@ from dataclasses import dataclass
 @dataclass
 class Config:
     vocab_size:  int   = 512
-    n_embd:      int   = 96      # ← reducido de 128 (−43% params totales)
+    n_embd:      int   = 96
     n_head:      int   = 4       # head_dim = 96/4 = 24
     n_layer:     int   = 4
     block_size:  int   = 128
@@ -114,6 +114,16 @@ def apply_rope(
 # ─────────────────────────────────────────────────────────────
 # BLOQUES INTERNOS
 # ─────────────────────────────────────────────────────────────
+
+class RMSNorm(nn.Module):
+    def __init__(self, dim: int, eps: float = 1e-6):
+        super().__init__()
+        self.eps   = eps
+        self.scale = nn.Parameter(torch.ones(dim))
+
+    def forward(self, x):
+        rms = x.pow(2).mean(-1, keepdim=True).add(self.eps).sqrt()
+        return x / rms * self.scale
  
 class CausalSelfAttention(nn.Module):
     """
@@ -200,9 +210,9 @@ class TransformerBlock(nn.Module):
  
     def __init__(self, config: Config):
         super().__init__()
-        self.ln1  = nn.LayerNorm(config.n_embd)
+        self.ln1  = RMSNorm(config.n_embd)
         self.attn = CausalSelfAttention(config)
-        self.ln2  = nn.LayerNorm(config.n_embd)
+        self.ln2  = RMSNorm(config.n_embd)
         self.ff   = FeedForward(config)
  
     def forward(
