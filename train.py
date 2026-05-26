@@ -28,9 +28,9 @@ from tinylm.dataset   import load_corpus, build_dataset, get_batch
 # HIPERPARÁMETROS
 # ─────────────────────────────────────────────────────────────
 
-VOCAB_SIZE   = 2048   # tamaño del vocabulario BPE
+VOCAB_SIZE   = 512   # tamaño del vocabulario BPE
 BLOCK_SIZE   = 128    # longitud de contexto (tokens)
-N_EMBD       = 128    # dimensión del embedding
+N_EMBD       = 96    # dimensión del embedding
 N_HEAD       = 4      # cabezas de atención
 N_LAYER      = 4      # bloques Transformer
 DROPOUT      = 0.1
@@ -44,6 +44,24 @@ VAL_SPLIT    = 0.1    # fracción del corpus para validación
 
 TOKENIZER_PATH   = "tokenizer.json"
 CHECKPOINT_PATH  = "checkpoint.pt"
+
+
+# -----------------------------------------------------------
+# WORKER DE TOKENIZACION (nivel de modulo, requerido por multiprocessing)
+# -----------------------------------------------------------
+
+def _tokenize_chunk(args: tuple) -> list:
+    # Tokeniza un chunk de cuentos en un proceso worker.
+    # Recibe el tokenizador serializado como JSON para evitar
+    # problemas de pickling con metodos de instancia.
+    chunk, tok_data = args
+    import json
+    from tinylm.tokenizer import BPETokenizer
+    tok = BPETokenizer.load_from_dict(json.loads(tok_data))
+    ids = []
+    for cuento in chunk:
+        ids.extend(tok.encode_with_special(cuento))
+    return ids
 
 
 # ─────────────────────────────────────────────────────────────
@@ -89,16 +107,6 @@ def load_checkpoint(model, optimizer, path, device):
     return ckpt["step"], ckpt["loss"]
 
 
-def _tokenize_chunk(args):
-    chunk, tok_data = args
-    import json
-    from tinylm.tokenizer import BPETokenizer
-    tok = BPETokenizer.load_from_dict(json.loads(tok_data))
-    ids = []
-    for cuento in chunk:
-        ids.extend(tok.encode_with_special(cuento))
-    return ids
-
 # ─────────────────────────────────────────────────────────────
 # GENERACIÓN  — muestra texto durante el entrenamiento
 # ─────────────────────────────────────────────────────────────
@@ -128,7 +136,8 @@ def sample(
         print(f"  [{prompt!r}] → {text}")
     print()
     model.train()
-    
+
+
 # ─────────────────────────────────────────────────────────────
 # MAIN
 # ─────────────────────────────────────────────────────────────
@@ -169,7 +178,7 @@ def main():
     if tokenizer is None:
         print(f"  Entrenando BPE (vocab_size={args.vocab_size})...")
         tokenizer = BPETokenizer()
-        tokenizer.train(corpus, vocab_size=args.vocab_size, verbose=True)
+        tokenizer.train("\n\n".join(corpus), vocab_size=args.vocab_size, verbose=True)
         tokenizer.save(TOKENIZER_PATH)
         print(f"  Guardado en {TOKENIZER_PATH}")
 
@@ -187,11 +196,11 @@ def main():
     import hashlib, pickle
     from multiprocessing import Pool, cpu_count
 
-    # Clave de caché: cambia si cambia el corpus o el tokenizador
-    cache_key = hashlib.md5((corpus + str(tokenizer.vocab_size)).encode()).hexdigest()[:12]
-    cache_path = f"{TOKENIZER_PATH.replace('.json', '')}_{cache_key}_ids.pkl"
+    cuentos = corpus   # ya es list[str], sin split frágil
 
-    cuentos = [c.strip() for c in corpus.split("\n\n") if c.strip()]
+    # Clave de caché: número real de cuentos + vocab
+    cache_key = hashlib.md5((str(len(cuentos)) + str(tokenizer.vocab_size)).encode()).hexdigest()[:12]
+    cache_path = f"{TOKENIZER_PATH.replace('.json', '')}_{cache_key}_ids.pkl"
 
     if os.path.exists(cache_path):
         print(f"  Cargando tokens desde caché ({cache_path})...")
@@ -201,8 +210,7 @@ def main():
         n_workers = min(cpu_count(), 8)
         print(f"  Tokenizando {len(cuentos)} cuentos con {n_workers} workers...")
 
-        # encode_with_special no es picklable como método de instancia,
-        # por lo que pasamos el tokenizador serializado a cada worker
+        # Serializar el tokenizador para pasarlo a los workers
         import json as _json
         tok_data = _json.dumps({"vocab": tokenizer.vocab, "merges": tokenizer.merges})
 

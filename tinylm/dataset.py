@@ -19,6 +19,7 @@ Para instalar la dependencia:
 import os
 import re
 
+
 # ── Carga del dataset ────────────────────────────────────────
 
 def _load_from_datasets(max_stories: int | None = None) -> str:
@@ -61,7 +62,7 @@ def _load_from_datasets(max_stories: int | None = None) -> str:
     print(f"  {len(ds)} cuentos | columna: '{text_col}'")
 
     texts = [str(row[text_col]) for row in ds if row[text_col]]
-    return "\n\n".join(texts)
+    return texts
 
 
 def _detect_text_column(columns: list[str]) -> str:
@@ -99,7 +100,7 @@ def clean_text(text: str) -> str:
 def load_corpus(
     local_path: str | None = None,   # ignorado, mantenido por compatibilidad
     max_stories: int | None = None,
-) -> str:
+) -> list[str]:
     """
     Carga y limpia el corpus de cuentos.
 
@@ -110,18 +111,18 @@ def load_corpus(
 
     Retorna
     -------
-    text : string con todo el corpus limpio
+    stories : lista de strings, uno por cuento, ya limpios
     """
     if local_path is not None:
         print("  [Nota] local_path ignorado — usando siempre datasets + caché HuggingFace")
 
-    text = _load_from_datasets(max_stories=max_stories)
-    text = clean_text(text)
+    stories = [clean_text(s) for s in _load_from_datasets(max_stories=max_stories) if s.strip()]
 
-    print(f"  Corpus listo: {len(text):,} caracteres | "
-          f"{len(text.split()):,} palabras | "
-          f"{text.count(chr(10)):,} líneas")
-    return text
+    n_chars = sum(len(s) for s in stories)
+    n_words = sum(len(s.split()) for s in stories)
+    print(f"  Corpus listo: {len(stories)} cuentos | "
+          f"{n_chars:,} caracteres | {n_words:,} palabras")
+    return stories
 
 
 # ── Preparación de tensores ──────────────────────────────────

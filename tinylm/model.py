@@ -35,7 +35,7 @@ from dataclasses import dataclass
 class Config:
     vocab_size:  int   = 512
     n_embd:      int   = 96
-    n_head:      int   = 4       # head_dim = 96/4 = 24
+    n_head:      int   = 4
     n_layer:     int   = 4
     block_size:  int   = 128
     dropout:     float = 0.1
